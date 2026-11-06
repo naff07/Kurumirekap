@@ -17,8 +17,8 @@ getcontext().prec = 50
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 
 # ==================== KONFIGURASI ADMIN ====================
-# GANTI ANGKA DI BAWAH INI DENGAN ID TELEGRAM KAMU (dari @userinfobot)
-ADMIN_ID = 1913524457 
+# GANTI ANGKA DI BAWAH INI DENGAN ID TELEGRAM KAMU
+ADMIN_ID = 123456789 
 # ==========================================================
 
 MAX_LINES = 1000
@@ -37,15 +37,12 @@ DB_FILE = "database.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Tabel Utang
     c.execute('''CREATE TABLE IF NOT EXISTS utang
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   user_id INTEGER, nama TEXT, nominal TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    # Tabel Pengingat
     c.execute('''CREATE TABLE IF NOT EXISTS pengingat
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   user_id INTEGER, chat_id INTEGER, pesan TEXT, jam TEXT)''')
-    # TABEL BARU: Untuk mencatat user bot
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, 
                   username TEXT, first_name TEXT, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
@@ -53,10 +50,8 @@ def init_db():
     conn.close()
 
 def catat_user(user):
-    """Menyimpan data user baru ke database."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # INSERT OR IGNORE: Jika user sudah ada, jangan lakukan apa-apa (abaikan)
     c.execute("INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
               (user.id, user.username or "", user.first_name or ""))
     conn.commit()
@@ -106,9 +101,9 @@ def _fmt(d: Decimal) -> str:
 def _esc(s: str) -> str:
     return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-# ==================== MESIN KALKULATOR ====================
+# ==================== MESIN KALKULATOR & PARSING ====================
 def hitung_ekspresi(expr_str: str) -> tuple:
-    expr_str = expr_str.replace('×', '*').replace('x', '*').replace('X', '*').replace('÷', '/').replace(':', '/')
+    expr_str = expr_str.replace('?', '*').replace('x', '*').replace('X', '*').replace('?', '/').replace(':', '/')
     parts = re.findall(r'[\d.,]+|[\+\-\*/]', expr_str)
     if not parts: raise ValueError("ekspresi kosong")
     result = parse_decimal(parts[0])
@@ -118,10 +113,10 @@ def hitung_ekspresi(expr_str: str) -> tuple:
         op = parts[i]
         if i + 1 >= len(parts): raise ValueError("ekspresi tidak lengkap")
         num = parse_decimal(parts[i+1])
-        if op == '*': result *= num; op_strs.append('×')
+        if op == '*': result *= num; op_strs.append('?')
         elif op == '/':
             if num == 0: raise ValueError("pembagian dengan nol")
-            result /= num; op_strs.append('÷')
+            result /= num; op_strs.append('?')
         elif op == '+': result += num; op_strs.append('+')
         elif op == '-': result -= num; op_strs.append('-')
         i += 2
@@ -133,51 +128,51 @@ def hitung_ekspresi(expr_str: str) -> tuple:
 def parse_line(line: str) -> dict:
     line = line.strip()
     if not line: raise ValueError("baris kosong")
-    if '=' in line:
-        line = line.split('=', 1)[0].strip()
-        if not line: raise ValueError("kosong setelah '='")
-
-    m = re.match(r'^(.+?)\s+(\d+)\s+([\d.,\-]+)$', line)
-    if m:
-        try: return {'type': 'single', 'prefix': m.group(1).strip(), 'num': m.group(2), 'value': parse_decimal(m.group(3))}
-        except ValueError: pass
-
-    m = re.match(r'^(.+?)\s+(\d+)-(\d+)\s*[=:]\s*([\d.,\-]+)$', line)
-    if m:
-        prefix, n1_s, n2_s = m.group(1).strip(), m.group(2), m.group(3)
-        n1, n2 = int(n1_s), int(n2_s)
-        if n2 < n1: raise ValueError(f"range terbalik")
-        if n2 - n1 + 1 > MAX_LINES: raise ValueError(f"range > {MAX_LINES}")
-        return {'type': 'range', 'prefix': prefix, 'start': n1, 'end': n2, 'width': len(n1_s), 'value': parse_decimal(m.group(4))}
-
-    m = re.match(r'^(.+?)\s+(\d+)-(\d+)$', line)
-    if m:
-        prefix, n1_s, n2_s = m.group(1).strip(), m.group(2), m.group(3)
-        n1, n2 = int(n1_s), int(n2_s)
-        if n2 < n1: raise ValueError(f"range terbalik")
-        if n2 - n1 + 1 > MAX_LINES: raise ValueError(f"range > {MAX_LINES}")
-        return {'type': 'range', 'prefix': prefix, 'start': n1, 'end': n2, 'width': len(n1_s), 'value': None}
-
-    m = re.match(r'^(.+?)\s+(\d+)\s*[=:]\s*([\d.,\-]+)$', line)
-    if m: return {'type': 'single', 'prefix': m.group(1).strip(), 'num': m.group(2), 'value': parse_decimal(m.group(3))}
     
-    m = re.match(r'^(.+?)\s+(\d+)\s+-\s*([\d.,\-]+)$', line)
-    if m: return {'type': 'single', 'prefix': m.group(1).strip(), 'num': m.group(2), 'value': parse_decimal(m.group(3))}
+    clean_line = line.replace('=', ' ').replace(':', ' ')
 
-    m = re.match(r'^(.+?)\s+(\d+)$', line)
-    if m: return {'type': 'single', 'prefix': m.group(1).strip(), 'num': m.group(2), 'value': None}
+    # 1. PRIORITAS UTAMA: Ambil angka paling ujung kanan sebagai nilai
+    m = re.match(r'^(.+?)\s+([\d.,]+)$', clean_line)
+    if m:
+        prefix_text = m.group(1).strip()
+        value_str = m.group(2)
+        
+        # Cek apakah teks depannya ini sebenarnya format Range (misal: 01-20)
+        m_range = re.match(r'^(.+?)\s+(\d+)-(\d+)$', prefix_text)
+        if m_range:
+            p, n1_s, n2_s = m_range.group(1).strip(), m_range.group(2), m_range.group(3)
+            n1, n2 = int(n1_s), int(n2_s)
+            if n2 < n1: raise ValueError("range terbalik")
+            if n2 - n1 + 1 > MAX_LINES: raise ValueError("range terlalu panjang")
+            return {'type': 'range', 'prefix': p, 'start': n1, 'end': n2, 'width': len(n1_s), 'value': parse_decimal(value_str)}
+        
+        # Jika bukan range, anggap ini Single Item (teks + nilai)
+        return {'type': 'single', 'prefix': prefix_text, 'num': '', 'value': parse_decimal(value_str)}
 
-    if re.search(r'[\d.,]+\s*[\+\-\*/\×\÷\:xX]\s*[\d.,]+', line):
+    # 2. Cek Range Tanpa Nilai
+    m = re.match(r'^(.+?)\s+(\d+)-(\d+)$', clean_line)
+    if m:
+        p, n1_s, n2_s = m.group(1).strip(), m.group(2), m.group(3)
+        n1, n2 = int(n1_s), int(n2_s)
+        if n2 < n1: raise ValueError("range terbalik")
+        if n2 - n1 + 1 > MAX_LINES: raise ValueError("range terlalu panjang")
+        return {'type': 'range', 'prefix': p, 'start': n1, 'end': n2, 'width': len(n1_s), 'value': None}
+
+    # 3. Cek Ekspresi Matematika
+    if re.search(r'[\d.,]+\s*[\+\-\*/\?\?\:xX]\s*[\d.,]+', line):
         val, label = hitung_ekspresi(line)
         return {'type': 'expr', 'value': val, 'label': label}
 
+    # 4. Angka saja
     try: return {'type': 'bare', 'value': parse_decimal(line)}
     except ValueError: pass
-    raise ValueError("format tidak dikenali")
+    
+    # 5. Teks tanpa angka
+    return {'type': 'single', 'prefix': line, 'num': '', 'value': None}
 
 def expand(p: dict):
     t = p['type']
-    if t == 'single': return [(f"{p['prefix']} {p['num']}", p['value'])]
+    if t == 'single': return [(f"{p['prefix']}", p['value'])]
     if t == 'range': return [(f"{p['prefix']} {str(n).zfill(p['width'])}", p['value']) for n in range(p['start'], p['end'] + 1)]
     if t == 'expr': return [(f"{p['label']}", p['value'])]
     if t == 'bare': return [(None, p['value'])]
@@ -187,14 +182,16 @@ def render_items(items) -> str:
     lines = []
     for label, val in items:
         if label is None: lines.append(_fmt(val) if val is not None else "-")
-        else: lines.append(f"{label} {_fmt(val)}" if val is not None else f"{label}")
+        else: 
+            if val is not None: lines.append(f"{label} {_fmt(val)}")
+            else: lines.append(f"{label}")
     return "\n".join(lines)
 
 def build_summary(items, errors) -> str:
     values = [v for _, v in items if v is not None]
     if not values:
-        out = ["━━━━━━━━━━━━━━━━", "📊 <b>Ringkasan</b>", f"Total baris teks: <b>{len(items)}</b>"]
-        if errors: out.append(f"⚠️ {len(errors)} baris gagal.")
+        out = ["????????????????", "? <b>Ringkasan</b>", f"Total baris teks: <b>{len(items)}</b>"]
+        if errors: out.append(f"?? {len(errors)} baris gagal.")
         return "\n".join(out)
 
     total = sum(values, Decimal(0))
@@ -208,16 +205,16 @@ def build_summary(items, errors) -> str:
     else: deret_str = " + ".join(str_values[:5]) + " + ... + " + " + ".join(str_values[-3:])
 
     out = [
-        "━━━━━━━━━━━━━━━━", "📊 <b>Ringkasan Perhitungan</b>",
+        "????????????????", "? <b>Ringkasan Perhitungan</b>",
         f"Baris dihitung: <b>{n}</b>", f"Total: <b>{_esc(_fmt(total))}</b>",
         f"Rata-rata: <b>{_esc(_fmt(avg))}</b>", f"Min: <b>{_esc(_fmt(mn))}</b>", f"Max: <b>{_esc(_fmt(mx))}</b>\n",
         f"<pre>{_esc(deret_str)} = {_esc(_fmt(total))}</pre>"
     ]
-    if zeros: out.append(f"⚠️ Baris bernilai 0: <b>{zeros}</b>")
-    if errors: out.append(f"⚠️ {len(errors)} baris gagal.")
+    if zeros: out.append(f"?? Baris bernilai 0: <b>{zeros}</b>")
+    if errors: out.append(f"?? {len(errors)} baris gagal.")
     return "\n".join(out)
 
-# ==================== BACKGROUND TASK (ALARM HARIAN) ====================
+# ==================== BACKGROUND TASK (ALARM) ====================
 async def cek_pengingat(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now().strftime("%H:%M")
     conn = sqlite3.connect(DB_FILE)
@@ -227,7 +224,7 @@ async def cek_pengingat(context: ContextTypes.DEFAULT_TYPE):
     
     for rid, chat_id, pesan in due_reminders:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"⏰ <b>PENGINGAT HARIAN!</b>\n\n{pesan}", parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=f"? <b>PENGINGAT HARIAN!</b>\n\n{pesan}", parse_mode='HTML')
         except Exception as e:
             logger.error(f"Gagal kirim pengingat: {e}")
             
@@ -239,18 +236,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.message
         if not msg or not msg.text: return
 
-        # Catat user yang mengirim pesan
         catat_user(msg.from_user)
 
+        # Abaikan pesan di grup (Bot hanya jalan di Private Chat)
         if update.effective_chat.type in ('group', 'supergroup'):
-            mention = False
-            if msg.entities:
-                for e in msg.entities:
-                    if e.type == 'mention':
-                        txt = msg.text[e.offset:e.offset + e.length].lower()
-                        if txt == f"@{context.bot.username.lower()}": mention = True; break
-            replied = (msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.id == context.bot.id)
-            if not (mention or replied): return
+            return
 
         raw = msg.text.strip()
         lines = raw.split('\n')
@@ -273,7 +263,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c.execute("INSERT INTO utang (user_id, nama, nominal) VALUES (?, ?, ?)", (msg.from_user.id, nama, nominal))
             conn.commit()
             conn.close()
-            return await msg.reply_text(f"✅ Berhasil mencatat <b>{len(utang_items)}</b> utang/tagihan.\nKetik /list_utang untuk melihatnya.", parse_mode='HTML')
+            return await msg.reply_text(f"? Berhasil mencatat <b>{len(utang_items)}</b> utang/tagihan.\nKetik /list_utang untuk melihatnya.", parse_mode='HTML')
 
         items, errors = [], []
         for i, ln in enumerate(lines, 1):
@@ -283,7 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not items:
             detail = "\n".join(errors[:5]) if errors else "Tidak ada data."
-            return await msg.reply_text(f"❌ Tidak ada data valid.\n\n{_esc(detail)}", parse_mode='HTML')
+            return await msg.reply_text(f"? Tidak ada data valid.\n\n{_esc(detail)}", parse_mode='HTML')
 
         summary = build_summary(items, errors)
         if len(items) > MAX_CHAT_LINES:
@@ -297,54 +287,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(full) > MAX_MSG_LEN:
             buf = io.BytesIO(render_items(items).encode('utf-8'))
             buf.name = "rekap.txt"
-            return await msg.reply_document(document=buf, caption="📄 Hasil terlalu panjang, dikirim sebagai file.")
+            return await msg.reply_document(document=buf, caption="? Hasil terlalu panjang, dikirim sebagai file.")
         await msg.reply_text(full, parse_mode='HTML')
 
     except Exception as e:
         logger.exception("handler error")
-        try: await update.message.reply_text(f"❌ Error: {_esc(str(e))[:200]}")
+        try: await update.message.reply_text(f"? Error: {_esc(str(e))[:200]}")
         except Exception: pass
 
-# FITUR BARU: COMMAND /stats UNTUK ADMIN
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return await update.message.reply_text("❌ Maaf, perintah ini hanya untuk Admin/Owner bot.")
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("? Maaf, perintah ini hanya untuk Admin/Owner bot.")
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
-    # Hitung total user
     c.execute("SELECT COUNT(*) FROM users")
     total_users = c.fetchone()[0]
-    
-    # Hitung total utang tercatat
     c.execute("SELECT COUNT(*) FROM utang")
     total_utang = c.fetchone()[0]
-    
-    # Hitung total alarm aktif
     c.execute("SELECT COUNT(*) FROM pengingat")
     total_alarm = c.fetchone()[0]
-    
-    # Ambil 5 user terbaru
     c.execute("SELECT first_name, username FROM users ORDER BY joined_at DESC LIMIT 5")
     recent_users = c.fetchall()
-    
     conn.close()
 
     text = (
-        "📊 <b>STATISTIK BOT (ADMIN)</b>\n\n"
-        f"👥 Total Pengguna: <b>{total_users}</b> orang\n"
-        f"💸 Total Catatan Utang: <b>{total_utang}</b>\n"
-        f"⏰ Total Alarm Aktif: <b>{total_alarm}</b>\n\n"
+        "? <b>STATISTIK BOT (ADMIN)</b>\n\n"
+        f"? Total Pengguna: <b>{total_users}</b> orang\n"
+        f"? Total Catatan Utang: <b>{total_utang}</b>\n"
+        f"? Total Alarm Aktif: <b>{total_alarm}</b>\n\n"
         "<b>5 Pengguna Terbaru:</b>\n"
     )
-    
     for name, uname in recent_users:
-        text += f"• {name} (@{uname})\n" if uname else f"• {name}\n"
+        text += f"� {name} (@{uname})\n" if uname else f"� {name}\n"
 
     await update.message.reply_text(text, parse_mode='HTML')
-
 
 async def list_utang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
@@ -354,11 +331,11 @@ async def list_utang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        return await update.message.reply_text("📭 Belum ada catatan utang.")
+        return await update.message.reply_text("? Belum ada catatan utang.")
 
-    text = "📋 <b>Daftar Utang/Tagihan Kamu:</b>\n\n"
+    text = "? <b>Daftar Utang/Tagihan Kamu:</b>\n\n"
     for nama, nominal in rows:
-        text += f"• <b>@{nama}</b> : {nominal}\n"
+        text += f"� <b>@{nama}</b> : {nominal}\n"
     
     text += "\n<i>(Ketik /hapus_utang untuk membersihkan daftar)</i>"
     await update.message.reply_text(text, parse_mode='HTML')
@@ -369,13 +346,13 @@ async def hapus_utang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("DELETE FROM utang WHERE user_id = ?", (update.effective_user.id,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("🗑️ Semua catatan utang berhasil dihapus.")
+    await update.message.reply_text("?? Semua catatan utang berhasil dihapus.")
 
 async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if len(context.args) < 2:
             return await update.message.reply_text(
-                "⚠️ <b>Format Salah!</b>\n\n"
+                "?? <b>Format Salah!</b>\n\n"
                 "Gunakan format: <code>/reminder HH:MM pesan</code>\n\n"
                 "Contoh:\n<code>/reminder 20:00 Tagih utang @anu1</code>",
                 parse_mode='HTML')
@@ -390,7 +367,7 @@ async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             datetime.datetime.strptime(jam_str, "%H:%M")
         except ValueError:
-            return await update.message.reply_text("❌ Format jam salah. Gunakan format 24 jam (contoh: 08:30 atau 20:00).")
+            return await update.message.reply_text("? Format jam salah. Gunakan format 24 jam (contoh: 08:30 atau 20:00).")
 
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -399,9 +376,9 @@ async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        await update.message.reply_text(f"✅ <b>Alarm Harian diset!</b>\n\n⏰ Jam: {jam_str} (Setiap hari)\n📝 Pesan: {pesan}", parse_mode='HTML')
+        await update.message.reply_text(f"? <b>Alarm Harian diset!</b>\n\n? Jam: {jam_str} (Setiap hari)\n? Pesan: {pesan}", parse_mode='HTML')
     except Exception as e:
-        await update.message.reply_text(f"❌ Error internal: {str(e)}")
+        await update.message.reply_text(f"? Error internal: {str(e)}")
 
 async def list_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
@@ -411,11 +388,11 @@ async def list_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        return await update.message.reply_text("📭 Belum ada alarm harian yang aktif.")
+        return await update.message.reply_text("? Belum ada alarm harian yang aktif.")
 
-    text = "⏰ <b>Daftar Alarm Harian Kamu:</b>\n\n"
+    text = "? <b>Daftar Alarm Harian Kamu:</b>\n\n"
     for rid, jam, pesan in rows:
-        text += f"• <code>{jam}</code> - {pesan}\n"
+        text += f"� <code>{jam}</code> - {pesan}\n"
     
     text += "\n<i>(Ketik /hapus_reminder untuk mematikan semua alarm)</i>"
     await update.message.reply_text(text, parse_mode='HTML')
@@ -426,28 +403,26 @@ async def hapus_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     c.execute("DELETE FROM pengingat WHERE user_id = ?", (update.effective_user.id,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("🗑️ Semua alarm harian berhasil dimatikan.")
+    await update.message.reply_text("?? Semua alarm harian berhasil dimatikan.")
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Catat user baru yang klik start
     catat_user(update.effective_user)
-
     await update.message.reply_text(
-        "👋 <b>Bot Asisten & Rekapan Otomatis</b>\n\n"
-        "<b>📌 Fitur Kalkulator:</b>\n"
-        "• <code>shopee 01 58</code> (Hitung nilai)\n"
-        "• <code>1311*0.55/7.2</code> (Matematika berantai)\n\n"
-        "<b>💸 Fitur Catat Utang (Tagihan):</b>\n"
+        "? <b>Bot Asisten & Rekapan Otomatis</b>\n\n"
+        "<b>? Fitur Kalkulator:</b>\n"
+        "� <code>shopee 01 58</code> (Hitung nilai)\n"
+        "� <code>1311*0.55/7.2</code> (Matematika berantai)\n\n"
+        "<b>? Fitur Catat Utang (Tagihan):</b>\n"
         "Ketik langsung (bisa multi-baris):\n"
         "<code>@budi 2000000</code>\n"
         "<code>@ani 100usdt</code>\n"
-        "→ /list_utang (Lihat daftar)\n"
-        "→ /hapus_utang (Hapus daftar)\n\n"
-        "<b>⏰ Fitur Alarm Harian:</b>\n"
+        "? /list_utang (Lihat daftar)\n"
+        "? /hapus_utang (Hapus daftar)\n\n"
+        "<b>? Fitur Alarm Harian:</b>\n"
         "<code>/reminder HH:MM pesan</code>\n"
         "Contoh: <code>/reminder 20:00 Tagih Ani</code>\n"
-        "→ /list_reminder (Lihat alarm)\n"
-        "→ /hapus_reminder (Matikan alarm)",
+        "? /list_reminder (Lihat alarm)\n"
+        "? /hapus_reminder (Matikan alarm)",
         parse_mode='HTML')
 
 async def error_handler(update, context):
@@ -455,7 +430,7 @@ async def error_handler(update, context):
 
 def main():
     if not BOT_TOKEN:
-        print("❌ Environment variable BOT_TOKEN belum diset.")
+        print("? Environment variable BOT_TOKEN belum diset.")
         return
 
     init_db()
@@ -463,7 +438,7 @@ def main():
     
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", start_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd)) # Handler Admin
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("list_utang", list_utang_cmd))
     app.add_handler(CommandHandler("hapus_utang", hapus_utang_cmd))
     app.add_handler(CommandHandler("reminder", reminder_cmd))
@@ -475,7 +450,7 @@ def main():
     job_queue = app.job_queue
     job_queue.run_repeating(cek_pengingat, interval=30, first=5)
 
-    logger.info("Bot berjalan dengan fitur Database, Alarm, dan Statistik Admin...")
+    logger.info("Bot berjalan dengan fitur Database & Alarm Harian...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
