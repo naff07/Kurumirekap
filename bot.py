@@ -103,7 +103,7 @@ def _esc(s: str) -> str:
 
 # ==================== MESIN KALKULATOR & PARSING ====================
 def hitung_ekspresi(expr_str: str) -> tuple:
-    expr_str = expr_str.replace('?', '*').replace('x', '*').replace('X', '*').replace('?', '/').replace(':', '/')
+    expr_str = expr_str.replace('×', '*').replace('x', '*').replace('X', '*').replace('÷', '/').replace(':', '/')
     parts = re.findall(r'[\d.,]+|[\+\-\*/]', expr_str)
     if not parts: raise ValueError("ekspresi kosong")
     result = parse_decimal(parts[0])
@@ -113,10 +113,10 @@ def hitung_ekspresi(expr_str: str) -> tuple:
         op = parts[i]
         if i + 1 >= len(parts): raise ValueError("ekspresi tidak lengkap")
         num = parse_decimal(parts[i+1])
-        if op == '*': result *= num; op_strs.append('?')
+        if op == '*': result *= num; op_strs.append('×')
         elif op == '/':
             if num == 0: raise ValueError("pembagian dengan nol")
-            result /= num; op_strs.append('?')
+            result /= num; op_strs.append('÷')
         elif op == '+': result += num; op_strs.append('+')
         elif op == '-': result -= num; op_strs.append('-')
         i += 2
@@ -159,7 +159,7 @@ def parse_line(line: str) -> dict:
         return {'type': 'range', 'prefix': p, 'start': n1, 'end': n2, 'width': len(n1_s), 'value': None}
 
     # 3. Cek Ekspresi Matematika
-    if re.search(r'[\d.,]+\s*[\+\-\*/\?\?\:xX]\s*[\d.,]+', line):
+    if re.search(r'[\d.,]+\s*[\+\-\*/\×\÷\:xX]\s*[\d.,]+', line):
         val, label = hitung_ekspresi(line)
         return {'type': 'expr', 'value': val, 'label': label}
 
@@ -190,8 +190,8 @@ def render_items(items) -> str:
 def build_summary(items, errors) -> str:
     values = [v for _, v in items if v is not None]
     if not values:
-        out = ["????????????????", "? <b>Ringkasan</b>", f"Total baris teks: <b>{len(items)}</b>"]
-        if errors: out.append(f"?? {len(errors)} baris gagal.")
+        out = ["━━━━━━━━━━━━━━━━", "📊 <b>Ringkasan</b>", f"Total baris teks: <b>{len(items)}</b>"]
+        if errors: out.append(f"⚠️ {len(errors)} baris gagal.")
         return "\n".join(out)
 
     total = sum(values, Decimal(0))
@@ -205,13 +205,13 @@ def build_summary(items, errors) -> str:
     else: deret_str = " + ".join(str_values[:5]) + " + ... + " + " + ".join(str_values[-3:])
 
     out = [
-        "????????????????", "? <b>Ringkasan Perhitungan</b>",
+        "━━━━━━━━━━━━━━━━", "📊 <b>Ringkasan Perhitungan</b>",
         f"Baris dihitung: <b>{n}</b>", f"Total: <b>{_esc(_fmt(total))}</b>",
         f"Rata-rata: <b>{_esc(_fmt(avg))}</b>", f"Min: <b>{_esc(_fmt(mn))}</b>", f"Max: <b>{_esc(_fmt(mx))}</b>\n",
         f"<pre>{_esc(deret_str)} = {_esc(_fmt(total))}</pre>"
     ]
-    if zeros: out.append(f"?? Baris bernilai 0: <b>{zeros}</b>")
-    if errors: out.append(f"?? {len(errors)} baris gagal.")
+    if zeros: out.append(f"⚠️ Baris bernilai 0: <b>{zeros}</b>")
+    if errors: out.append(f"⚠️ {len(errors)} baris gagal.")
     return "\n".join(out)
 
 # ==================== BACKGROUND TASK (ALARM) ====================
@@ -224,7 +224,7 @@ async def cek_pengingat(context: ContextTypes.DEFAULT_TYPE):
     
     for rid, chat_id, pesan in due_reminders:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"? <b>PENGINGAT HARIAN!</b>\n\n{pesan}", parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=f"⏰ <b>PENGINGAT HARIAN!</b>\n\n{pesan}", parse_mode='HTML')
         except Exception as e:
             logger.error(f"Gagal kirim pengingat: {e}")
             
@@ -263,7 +263,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c.execute("INSERT INTO utang (user_id, nama, nominal) VALUES (?, ?, ?)", (msg.from_user.id, nama, nominal))
             conn.commit()
             conn.close()
-            return await msg.reply_text(f"? Berhasil mencatat <b>{len(utang_items)}</b> utang/tagihan.\nKetik /list_utang untuk melihatnya.", parse_mode='HTML')
+            return await msg.reply_text(f"✅ Berhasil mencatat <b>{len(utang_items)}</b> utang/tagihan.\nKetik /list_utang untuk melihatnya.", parse_mode='HTML')
 
         items, errors = [], []
         for i, ln in enumerate(lines, 1):
@@ -273,7 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not items:
             detail = "\n".join(errors[:5]) if errors else "Tidak ada data."
-            return await msg.reply_text(f"? Tidak ada data valid.\n\n{_esc(detail)}", parse_mode='HTML')
+            return await msg.reply_text(f"❌ Tidak ada data valid.\n\n{_esc(detail)}", parse_mode='HTML')
 
         summary = build_summary(items, errors)
         if len(items) > MAX_CHAT_LINES:
@@ -287,17 +287,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(full) > MAX_MSG_LEN:
             buf = io.BytesIO(render_items(items).encode('utf-8'))
             buf.name = "rekap.txt"
-            return await msg.reply_document(document=buf, caption="? Hasil terlalu panjang, dikirim sebagai file.")
+            return await msg.reply_document(document=buf, caption="📄 Hasil terlalu panjang, dikirim sebagai file.")
         await msg.reply_text(full, parse_mode='HTML')
 
     except Exception as e:
         logger.exception("handler error")
-        try: await update.message.reply_text(f"? Error: {_esc(str(e))[:200]}")
+        try: await update.message.reply_text(f"❌ Error: {_esc(str(e))[:200]}")
         except Exception: pass
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("? Maaf, perintah ini hanya untuk Admin/Owner bot.")
+        return await update.message.reply_text("❌ Maaf, perintah ini hanya untuk Admin/Owner bot.")
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -312,14 +312,14 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     text = (
-        "? <b>STATISTIK BOT (ADMIN)</b>\n\n"
-        f"? Total Pengguna: <b>{total_users}</b> orang\n"
-        f"? Total Catatan Utang: <b>{total_utang}</b>\n"
-        f"? Total Alarm Aktif: <b>{total_alarm}</b>\n\n"
+        "📊 <b>STATISTIK BOT (ADMIN)</b>\n\n"
+        f"👥 Total Pengguna: <b>{total_users}</b> orang\n"
+        f"💸 Total Catatan Utang: <b>{total_utang}</b>\n"
+        f"⏰ Total Alarm Aktif: <b>{total_alarm}</b>\n\n"
         "<b>5 Pengguna Terbaru:</b>\n"
     )
     for name, uname in recent_users:
-        text += f"� {name} (@{uname})\n" if uname else f"� {name}\n"
+        text += f"• {name} (@{uname})\n" if uname else f"• {name}\n"
 
     await update.message.reply_text(text, parse_mode='HTML')
 
@@ -331,11 +331,11 @@ async def list_utang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        return await update.message.reply_text("? Belum ada catatan utang.")
+        return await update.message.reply_text("📭 Belum ada catatan utang.")
 
-    text = "? <b>Daftar Utang/Tagihan Kamu:</b>\n\n"
+    text = "📋 <b>Daftar Utang/Tagihan Kamu:</b>\n\n"
     for nama, nominal in rows:
-        text += f"� <b>@{nama}</b> : {nominal}\n"
+        text += f"• <b>@{nama}</b> : {nominal}\n"
     
     text += "\n<i>(Ketik /hapus_utang untuk membersihkan daftar)</i>"
     await update.message.reply_text(text, parse_mode='HTML')
@@ -346,13 +346,13 @@ async def hapus_utang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("DELETE FROM utang WHERE user_id = ?", (update.effective_user.id,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("?? Semua catatan utang berhasil dihapus.")
+    await update.message.reply_text("🗑️ Semua catatan utang berhasil dihapus.")
 
 async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if len(context.args) < 2:
             return await update.message.reply_text(
-                "?? <b>Format Salah!</b>\n\n"
+                "⚠️ <b>Format Salah!</b>\n\n"
                 "Gunakan format: <code>/reminder HH:MM pesan</code>\n\n"
                 "Contoh:\n<code>/reminder 20:00 Tagih utang @anu1</code>",
                 parse_mode='HTML')
@@ -367,7 +367,7 @@ async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             datetime.datetime.strptime(jam_str, "%H:%M")
         except ValueError:
-            return await update.message.reply_text("? Format jam salah. Gunakan format 24 jam (contoh: 08:30 atau 20:00).")
+            return await update.message.reply_text("❌ Format jam salah. Gunakan format 24 jam (contoh: 08:30 atau 20:00).")
 
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -376,9 +376,9 @@ async def reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        await update.message.reply_text(f"? <b>Alarm Harian diset!</b>\n\n? Jam: {jam_str} (Setiap hari)\n? Pesan: {pesan}", parse_mode='HTML')
+        await update.message.reply_text(f"✅ <b>Alarm Harian diset!</b>\n\n⏰ Jam: {jam_str} (Setiap hari)\n📝 Pesan: {pesan}", parse_mode='HTML')
     except Exception as e:
-        await update.message.reply_text(f"? Error internal: {str(e)}")
+        await update.message.reply_text(f"❌ Error internal: {str(e)}")
 
 async def list_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_FILE)
@@ -388,11 +388,11 @@ async def list_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        return await update.message.reply_text("? Belum ada alarm harian yang aktif.")
+        return await update.message.reply_text("📭 Belum ada alarm harian yang aktif.")
 
-    text = "? <b>Daftar Alarm Harian Kamu:</b>\n\n"
+    text = "⏰ <b>Daftar Alarm Harian Kamu:</b>\n\n"
     for rid, jam, pesan in rows:
-        text += f"� <code>{jam}</code> - {pesan}\n"
+        text += f"• <code>{jam}</code> - {pesan}\n"
     
     text += "\n<i>(Ketik /hapus_reminder untuk mematikan semua alarm)</i>"
     await update.message.reply_text(text, parse_mode='HTML')
@@ -403,26 +403,26 @@ async def hapus_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     c.execute("DELETE FROM pengingat WHERE user_id = ?", (update.effective_user.id,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("?? Semua alarm harian berhasil dimatikan.")
+    await update.message.reply_text("🗑️ Semua alarm harian berhasil dimatikan.")
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catat_user(update.effective_user)
     await update.message.reply_text(
-        "? <b>Bot Asisten & Rekapan Otomatis</b>\n\n"
-        "<b>? Fitur Kalkulator:</b>\n"
-        "� <code>shopee 01 58</code> (Hitung nilai)\n"
-        "� <code>1311*0.55/7.2</code> (Matematika berantai)\n\n"
-        "<b>? Fitur Catat Utang (Tagihan):</b>\n"
+        "👋 <b>Bot Asisten & Rekapan Otomatis</b>\n\n"
+        "<b>📌 Fitur Kalkulator:</b>\n"
+        "• <code>shopee 01 58</code> (Hitung nilai)\n"
+        "• <code>1311*0.55/7.2</code> (Matematika berantai)\n\n"
+        "<b>💸 Fitur Catat Utang (Tagihan):</b>\n"
         "Ketik langsung (bisa multi-baris):\n"
         "<code>@budi 2000000</code>\n"
         "<code>@ani 100usdt</code>\n"
-        "? /list_utang (Lihat daftar)\n"
-        "? /hapus_utang (Hapus daftar)\n\n"
-        "<b>? Fitur Alarm Harian:</b>\n"
+        "→ /list_utang (Lihat daftar)\n"
+        "→ /hapus_utang (Hapus daftar)\n\n"
+        "<b>⏰ Fitur Alarm Harian:</b>\n"
         "<code>/reminder HH:MM pesan</code>\n"
         "Contoh: <code>/reminder 20:00 Tagih Ani</code>\n"
-        "? /list_reminder (Lihat alarm)\n"
-        "? /hapus_reminder (Matikan alarm)",
+        "→ /list_reminder (Lihat alarm)\n"
+        "→ /hapus_reminder (Matikan alarm)",
         parse_mode='HTML')
 
 async def error_handler(update, context):
@@ -430,7 +430,7 @@ async def error_handler(update, context):
 
 def main():
     if not BOT_TOKEN:
-        print("? Environment variable BOT_TOKEN belum diset.")
+        print("❌ Environment variable BOT_TOKEN belum diset.")
         return
 
     init_db()
